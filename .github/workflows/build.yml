@@ -1,0 +1,67 @@
+name: Compilar mod de Minecraft
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: gradle/actions/setup-gradle@v3
+        with:
+          gradle-version: 8.8
+
+      - name: Organizar src.zip y forzar mods.toml si falta
+        run: |
+          echo "Descomprimiendo src.zip..."
+          if [ -f "src.zip" ]; then
+            unzip -q src.zip -d extracted_src/
+            mkdir -p src/main/resources/META-INF
+            
+            # Buscar y copiar el mods.toml donde sea que esté dentro del zip
+            FOUND_TOML=$(find extracted_src -name "mods.toml" | head -1)
+            if [ -n "$FOUND_TOML" ]; then
+              cp "$FOUND_TOML" src/main/resources/META-INF/mods.toml
+              echo "¡mods.toml encontrado y colocado en su sitio!"
+            else
+              echo "ADVERTENCIA: No se encontró mods.toml en el zip, creando uno de emergencia..."
+              echo -e "modLoader=\"javafml\"\nloaderVersion=\"[47,)\"\n[[mods]]\nmodId=\"combatgods\"\nversion=\"0.1.0\"\ndisplayName=\"Combat Gods\"" > src/main/resources/META-INF/mods.toml
+            fi
+            
+            # Copiar también el código java si lo hay
+            if [ -d "extracted_src/java" ]; then
+              cp -r extracted_src/java src/main/
+            elif [ -d "extracted_src/main/java" ]; then
+              cp -r extracted_src/main/java src/main/
+            fi
+          else
+            echo "Falta el src.zip"
+            exit 1
+          fi
+
+      - name: Compilar mod con Gradle
+        run: gradle build --no-daemon --stacktrace
+
+      - name: Verificar el archivo .jar y el mods.toml
+        run: |
+          ls -la build/libs
+          unzip -l build/libs/*.jar | grep -q "META-INF/mods.toml" || { echo "ERROR: FALTA el mods.toml dentro del jar"; exit 1; }
+          echo "¡Éxito total! El mods.toml ya está dentro del jar."
+
+      - name: Subir el .jar listo a Releases
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: version-final
+          name: Combat Gods Mod (.jar)
+          prerelease: true
+          files: build/libs/*.jar
